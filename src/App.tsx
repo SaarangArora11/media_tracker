@@ -107,13 +107,19 @@ function App() {
 
         const groups: Record<string, MediaItem[]> = {};
         processedItems.forEach(item => {
-            let key = '';
-            if (groupBy === 'Category') key = item.category;
-            else if (groupBy === 'Priority') key = item.priority || 'Normal';
-            else if (groupBy === 'Location') key = item.location || 'Unknown';
+            let keys: string[] = [];
 
-            if (!groups[key]) groups[key] = [];
-            groups[key].push(item);
+            if (groupBy === 'Category') keys = [item.category];
+            else if (groupBy === 'Priority') keys = [item.priority || 'Normal'];
+            else if (groupBy === 'Location') keys = [item.location || 'Unknown'];
+            else if (groupBy === 'Genre') {
+                keys = item.genre ? item.genre.split(',').map(g => g.trim()) : ['Uncategorized'];
+            }
+
+            keys.forEach(key => {
+                if (!groups[key]) groups[key] = [];
+                groups[key].push(item);
+            });
         });
         return groups;
     }, [processedItems, groupBy]);
@@ -121,75 +127,89 @@ function App() {
     return (
         <div className="min-h-screen bg-[#121212] text-white font-sans flex flex-col">
             {/* Header */}
-            <header className="bg-[#1e1e1e] border-b border-gray-800 p-4 sticky top-0 z-10 shadow-lg">
-                <div className="max-w-7xl mx-auto flex justify-between items-center">
-                    <div>
-                        <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
-                            Media Tracker
-                        </h1>
-                        <p className="text-gray-400 text-sm mt-1">Track your year in consumption</p>
-                    </div>
-                    <div className="flex gap-3 items-center">
-                        {/* Backup Controls */}
-                        <div className="flex gap-2 mr-4 border-r border-gray-700 pr-4">
-                            <button
-                                onClick={async () => {
-                                    if (confirm('Create a full backup of your library?')) {
-                                        const res = await window.electronAPI.invoke('backup-create');
-                                        if (res.success) alert(`Backup saved to: ${res.path}`);
-                                        else if (res.message) alert(res.message);
-                                    }
-                                }}
-                                className="text-gray-400 hover:text-white text-xs uppercase font-bold tracking-wider"
-                            >
-                                Backup
-                            </button>
-                            <button
-                                onClick={async () => {
-                                    if (confirm('WARNING: Restore will OVERWRITE your current library and restart the app. Continue?')) {
-                                        const res = await window.electronAPI.invoke('backup-restore');
-                                        if (res && !res.success && res.message) alert(res.message);
-                                    }
-                                }}
-                                className="text-gray-400 hover:text-red-400 text-xs uppercase font-bold tracking-wider"
-                            >
-                                Restore
-                            </button>
+            <header className="bg-[#1e1e1e] border-b border-gray-800 sticky top-0 z-20 shadow-lg">
+                <div className="w-full px-6 py-4 flex flex-col gap-4">
+                    {/* Top Row: Title & Actions */}
+                    <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-6">
+                            <div>
+                                <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+                                    Media Tracker
+                                </h1>
+                                <p className="text-gray-400 text-xs mt-0.5 uppercase tracking-wider">Track your year</p>
+                            </div>
+
+                            {/* Tabs moved to Header */}
+                            <div className="hidden md:flex bg-[#121212] p-1 rounded-lg border border-gray-800 ml-8">
+                                {['Watching', 'To Consume', 'Consumed'].map((tab) => (
+                                    <button
+                                        key={tab}
+                                        onClick={() => setActiveTab(tab as any)}
+                                        className={`px-5 py-1.5 rounded-md text-sm font-medium transition-all ${activeTab === tab
+                                            ? 'bg-blue-600 text-white shadow-md'
+                                            : 'text-gray-400 hover:text-white hover:bg-white/5'
+                                            }`}
+                                    >
+                                        {tab}
+                                    </button>
+                                ))}
+                            </div>
                         </div>
 
-                        <button
-                            onClick={handleImportClick}
-                            className="bg-gray-700 hover:bg-gray-600 text-white font-medium px-4 py-2 rounded-lg transition-colors text-sm"
-                        >
-                            Import .txt
-                        </button>
-                        <button
-                            onClick={() => { setEditingItem(undefined); setIsModalOpen(true); }}
-                            className="bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-lg transition-colors shadow-lg hover:shadow-blue-500/20"
-                        >
-                            + Add Entry
-                        </button>
+                        <div className="flex gap-3 items-center">
+                            {/* Backup Controls */}
+                            <div className="flex gap-2 mr-4 border-r border-gray-700 pr-4">
+                                <button
+                                    onClick={async () => {
+                                        if (confirm('Create a full backup of your library?')) {
+                                            const res = await window.electronAPI.invoke('backup-create');
+                                            if (res.success) alert(`Backup saved to: ${res.path}`);
+                                            else if (res.message) alert(res.message);
+                                        }
+                                    }}
+                                    className="text-gray-400 hover:text-white text-xs uppercase font-bold tracking-wider"
+                                >
+                                    Backup
+                                </button>
+                                <button
+                                    onClick={async () => {
+                                        if (confirm('WARNING: Restore will OVERWRITE your current library and restart the app. Continue?')) {
+                                            const res = await window.electronAPI.invoke('backup-restore');
+                                            if (res && !res.success && res.message) alert(res.message);
+                                        }
+                                    }}
+                                    className="text-gray-400 hover:text-red-400 text-xs uppercase font-bold tracking-wider"
+                                >
+                                    Restore
+                                </button>
+                            </div>
+
+                            <button
+                                onClick={handleImportClick}
+                                className="bg-gray-700 hover:bg-gray-600 text-white font-medium px-4 py-2 rounded-lg transition-colors text-sm"
+                            >
+                                Import .txt
+                            </button>
+                            <button
+                                onClick={() => { setEditingItem(undefined); setIsModalOpen(true); }}
+                                className="bg-blue-600 hover:bg-blue-500 text-white font-medium px-4 py-2 rounded-lg transition-colors shadow-lg hover:shadow-blue-500/20"
+                            >
+                                + Add Entry
+                            </button>
+                        </div>
                     </div>
-                </div>
-            </header>
 
-            {/* Main Content */}
-            <main className="flex-1 max-w-7xl mx-auto w-full p-6 flex gap-6">
-
-                {/* Sidebar / Filters (Left) */}
-                {/* We can put the Tabs here or keep them top. Let's keep tabs top but add Tag Sidebar. */}
-
-                <div className="flex-1">
-                    {/* Tabs & Controls */}
-                    <div className="flex flex-col md:flex-row justify-between items-end mb-8 gap-4">
-                        <div className="flex bg-[#1e1e1e] p-1 rounded-lg border border-gray-800">
+                    {/* Mobile Tabs (if needed) & Filters Row */}
+                    <div className="flex flex-col md:flex-row justify-between items-end gap-4 border-t border-gray-800 pt-3">
+                        {/* Mobile Tabs Fallback */}
+                        <div className="md:hidden w-full flex bg-[#121212] p-1 rounded-lg border border-gray-800">
                             {['Watching', 'To Consume', 'Consumed'].map((tab) => (
                                 <button
                                     key={tab}
                                     onClick={() => setActiveTab(tab as any)}
-                                    className={`px-6 py-2 rounded-md text-sm font-medium transition-all ${activeTab === tab
-                                        ? 'bg-blue-600 text-white shadow-md'
-                                        : 'text-gray-400 hover:text-white hover:bg-white/5'
+                                    className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-all ${activeTab === tab
+                                        ? 'bg-blue-600 text-white'
+                                        : 'text-gray-400'
                                         }`}
                                 >
                                     {tab}
@@ -197,19 +217,19 @@ function App() {
                             ))}
                         </div>
 
-                        <div className="flex gap-3">
+                        {/* Filters */}
+                        <div className="flex gap-3 w-full md:w-auto overflow-x-auto pb-1 md:pb-0">
                             <input
                                 placeholder="Search..."
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
-                                className="bg-[#1e1e1e] border border-gray-700 text-white px-4 py-2 rounded-lg outline-none focus:border-blue-500 w-64"
+                                className="bg-[#121212] border border-gray-700 text-white px-3 py-1.5 rounded-md outline-none focus:border-blue-500 w-48 text-sm"
                             />
 
-                            {/* Tag Filter Dropdown */}
                             <select
                                 value={filterTag}
                                 onChange={(e) => setFilterTag(e.target.value)}
-                                className="bg-[#1e1e1e] border border-gray-700 text-white px-4 py-2 rounded-lg outline-none focus:border-blue-500 cursor-pointer"
+                                className="bg-[#121212] border border-gray-700 text-white px-3 py-1.5 rounded-md outline-none focus:border-blue-500 cursor-pointer text-sm"
                             >
                                 <option value="">All Tags</option>
                                 {uniqueTags.map(t => (
@@ -220,7 +240,7 @@ function App() {
                             <select
                                 value={sortBy}
                                 onChange={(e) => setSortBy(e.target.value as any)}
-                                className="bg-[#1e1e1e] border border-gray-700 text-white px-4 py-2 rounded-lg outline-none focus:border-blue-500 cursor-pointer"
+                                className="bg-[#121212] border border-gray-700 text-white px-3 py-1.5 rounded-md outline-none focus:border-blue-500 cursor-pointer text-sm"
                             >
                                 <option value="Newest">Newest First</option>
                                 <option value="Title">Title (A-Z)</option>
@@ -231,47 +251,49 @@ function App() {
                             <select
                                 value={groupBy}
                                 onChange={(e) => setGroupBy(e.target.value as any)}
-                                className="bg-[#1e1e1e] border border-gray-700 text-white px-4 py-2 rounded-lg outline-none focus:border-blue-500 cursor-pointer"
+                                className="bg-[#121212] border border-gray-700 text-white px-3 py-1.5 rounded-md outline-none focus:border-blue-500 cursor-pointer text-sm"
                             >
                                 <option value="None">No Grouping</option>
                                 <option value="Category">Group by Category</option>
                                 <option value="Priority">Group by Priority</option>
                                 <option value="Location">Group by Location</option>
+                                <option value="Genre">Group by Genre</option>
                             </select>
                         </div>
                     </div>
-
-                    {/* Content Grid */}
-                    <div className="space-y-8">
-                        {Object.entries(groupedItems).map(([group, groupItems]) => (
-                            <div key={group}>
-                                {groupBy !== 'None' && (
-                                    <h2 className="text-xl font-bold text-gray-400 mb-4 border-b border-gray-800 pb-2">
-                                        {group} <span className="text-sm font-normal ml-2 opacity-50">({groupItems.length})</span>
-                                    </h2>
-                                )}
-
-                                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
-                                    {groupItems.map(item => (
-                                        <MediaCard
-                                            key={item.id}
-                                            item={item}
-                                            onEdit={(i) => { setEditingItem(i); setIsModalOpen(true); }}
-                                            onDelete={handleDelete}
-                                        />
-                                    ))}
-                                </div>
-                            </div>
-                        ))}
-
-                        {processedItems.length === 0 && (
-                            <div className="text-center py-20 opacity-30">
-                                <p className="text-xl">No items found</p>
-                            </div>
-                        )}
-                    </div>
                 </div>
+            </header>
 
+            {/* Main Content */}
+            <main className="flex-1 w-full p-6">
+                <div className="space-y-8">
+                    {Object.entries(groupedItems).map(([group, groupItems]) => (
+                        <div key={group}>
+                            {groupBy !== 'None' && (
+                                <h2 className="text-xl font-bold text-gray-400 mb-4 border-b border-gray-800 pb-2">
+                                    {group} <span className="text-sm font-normal ml-2 opacity-50">({groupItems.length})</span>
+                                </h2>
+                            )}
+
+                            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 Gap-6">
+                                {groupItems.map(item => (
+                                    <MediaCard
+                                        key={item.id}
+                                        item={item}
+                                        onEdit={(i) => { setEditingItem(i); setIsModalOpen(true); }}
+                                        onDelete={handleDelete}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    ))}
+
+                    {processedItems.length === 0 && (
+                        <div className="text-center py-20 opacity-30">
+                            <p className="text-xl">No items found</p>
+                        </div>
+                    )}
+                </div>
             </main>
 
             <AddEditModal
