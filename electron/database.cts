@@ -13,7 +13,16 @@ const db = new Database(dbPath);
 // We need to handle the migration for 'Manga' support which requires updating the CHECK constraint.
 // SQLite doesn't support ALTER COLUMN for CHECK constraints, so we must recreate the table if needed.
 
+const tmdb = require('./tmdb.cjs');
+
 const initSchema = () => {
+    // Check if 'settings' table exists
+    const settingsTable = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='settings'").get();
+    if (!settingsTable) {
+        db.exec("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)");
+        console.log("Created 'settings' table.");
+    }
+
     // Robust Schema Check: Read the actual CREATE statement
     const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='items'").get();
 
@@ -122,7 +131,7 @@ const initSchema = () => {
                 'genre', 'tags', 'author', 'director', 'writer', 'actors', 'studio', 'platform', 'priority', 'location', 'created_at'
             ];
 
-            const colsToCopy = validColumns.filter((c: any) => oldColumns.includes(c));
+            const colsToCopy = validColumns.filter((c) => oldColumns.includes(c));
             const colsString = colsToCopy.join(', '); // e.g. "id, title, category..."
 
             console.log(`Migrating columns: ${colsString}`);
@@ -130,20 +139,24 @@ const initSchema = () => {
 
             // Drop old table
             db.exec('DROP TABLE items_old');
-
-            db.pragma('user_version = 2');
         });
 
         transaction();
-        console.log("Migration complete.");
+        console.log("Manga support migration complete.");
     } else {
-        console.log("Database schema is up to date (Manga supported).");
+        console.log("Database schema already supports Manga.");
+    }
+
+    // Ensure the user_version is updated to the latest after all migrations
+    if (db.pragma('user_version', { simple: true }) < currentVersion) {
+        db.pragma(`user_version = ${currentVersion}`);
+        console.log(`Database user_version updated to ${currentVersion}.`);
     }
 };
 
 initSchema();
 
-// Verify and Add Columns (Fallback for minor updates)
+// Verify and Add Columns (Fallback for minor updates, or if migrations were skipped/failed)
 const columnsToAdd = [
     'genre', 'tags', 'author', 'director', 'writer', 'actors', 'studio', 'platform', 'priority', 'location'
 ];
@@ -156,7 +169,7 @@ columnsToAdd.forEach(col => {
             console.log(`Adding missing column: ${col}`);
             const defaultVal = col === 'priority' ? "'Normal'" : "NULL";
             db.exec(`ALTER TABLE items ADD COLUMN ${col} TEXT DEFAULT ${defaultVal}`);
-        } catch (err: any) {
+        } catch (err) {
             console.error(`Failed to add column ${col}`, err);
         }
     }
@@ -166,7 +179,7 @@ columnsToAdd.forEach(col => {
 ipcMain.handle('get-items', () => {
     try {
         return db.prepare('SELECT * FROM items ORDER BY created_at DESC').all();
-    } catch (err: any) {
+    } catch (err) {
         console.error('get-items error:', err);
         return [];
     }
@@ -174,8 +187,26 @@ ipcMain.handle('get-items', () => {
 
 ipcMain.handle('add-item', (event: any, item: any) => {
     try {
-        // Default priority if missing
-        if (!item.priority) item.priority = 'Normal';
+        // Sanitize item to ensure all named parameters exist
+        const sanitizedItem = {
+            title: item.title,
+            category: item.category,
+            status: item.status,
+            date_finished: item.date_finished || null,
+            rating: item.rating || null,
+            review: item.review || null,
+            image_path: item.image_path || null,
+            genre: item.genre || null,
+            tags: item.tags || null,
+            author: item.author || null,
+            director: item.director || null,
+            writer: item.writer || null,
+            actors: item.actors || null,
+            studio: item.studio || null,
+            platform: item.platform || null,
+            priority: item.priority || 'Normal',
+            location: item.location || null
+        };
 
         const stmt = db.prepare(`
             INSERT INTO items (
@@ -187,8 +218,8 @@ ipcMain.handle('add-item', (event: any, item: any) => {
                 @genre, @tags, @author, @director, @writer, @actors, @studio, @platform, @priority, @location
             )
         `);
-        return stmt.run(item);
-    } catch (err: any) {
+        return stmt.run(sanitizedItem);
+    } catch (err) {
         console.error('add-item error:', err);
         throw err;
     }
@@ -196,6 +227,28 @@ ipcMain.handle('add-item', (event: any, item: any) => {
 
 ipcMain.handle('update-item', (event: any, item: any) => {
     try {
+        // Sanitize item to ensure all named parameters exist
+        const sanitizedItem = {
+            id: item.id,
+            title: item.title,
+            category: item.category,
+            status: item.status,
+            date_finished: item.date_finished || null,
+            rating: item.rating || null,
+            review: item.review || null,
+            image_path: item.image_path || null,
+            genre: item.genre || null,
+            tags: item.tags || null,
+            author: item.author || null,
+            director: item.director || null,
+            writer: item.writer || null,
+            actors: item.actors || null,
+            studio: item.studio || null,
+            platform: item.platform || null,
+            priority: item.priority || 'Normal',
+            location: item.location || null
+        };
+
         const stmt = db.prepare(`
             UPDATE items 
             SET title = @title, 
@@ -217,7 +270,7 @@ ipcMain.handle('update-item', (event: any, item: any) => {
                 location = @location
             WHERE id = @id
         `);
-        return stmt.run(item);
+        return stmt.run(sanitizedItem);
     } catch (err: any) {
         console.error('update-item error:', err);
         throw err;
@@ -392,6 +445,76 @@ ipcMain.handle('backup-restore', async () => {
         console.error('backup-restore error:', err);
         // If failed, try to reopen DB?
         return { success: false, message: err.message };
+    }
+});
+
+
+// Settings Handlers
+ipcMain.handle('save-setting', (event: any, { key, value }: any) => {
+    try {
+        const stmt = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+        return stmt.run(key, value);
+    } catch (err: any) {
+        console.error('save-setting error:', err);
+        return { success: false, message: err.message };
+    }
+});
+
+ipcMain.handle('get-setting', (event: any, key: any) => {
+    try {
+        const stmt = db.prepare('SELECT value FROM settings WHERE key = ?');
+        const row = stmt.get(key);
+        return row ? row.value : null;
+    } catch (err: any) {
+        console.error('get-setting error:', err);
+        return null;
+    }
+});
+
+// TMDB Handlers
+ipcMain.handle('tmdb-search', async (event: any, query: any, category: any) => {
+    try {
+        const apiKey = db.prepare("SELECT value FROM settings WHERE key = 'tmdb_api_key'").get()?.value;
+        if (!apiKey) throw new Error('API Key not found');
+        return await tmdb.search(query, category || 'Movies', apiKey);
+    } catch (err: any) {
+        console.error('tmdb-search error:', err);
+        return { success: false, error: err.message };
+    }
+});
+
+ipcMain.handle('tmdb-get-details', async (event: any, id: any, type: any) => {
+    try {
+        const apiKey = db.prepare("SELECT value FROM settings WHERE key = 'tmdb_api_key'").get()?.value;
+        if (!apiKey) throw new Error('API Key not found');
+
+        const details: any = await tmdb.getDetails(id, type, apiKey);
+
+        // Download Poster if available
+        if (details.poster_path) {
+            const coversDir = path.join(app.getPath('userData'), 'covers');
+            if (!fs.existsSync(coversDir)) {
+                fs.mkdirSync(coversDir, { recursive: true });
+            }
+
+            const fileName = `tmdb_${id}_${Date.now()}.jpg`;
+            const localPath = path.join(coversDir, fileName);
+
+            try {
+                await tmdb.downloadImage(details.poster_path, localPath);
+                details.localImagePath = localPath; // Return local path to frontend
+            } catch (imgErr) {
+                console.error("Failed to download image:", imgErr);
+                // Fallback to URL or null if download fails, but keeping URL might be useful
+                // details.localImagePath = details.poster_path; 
+            }
+        }
+
+        return details;
+    } catch (err: any) {
+        console.error('tmdb-get-details error:', err);
+        const apiKey = db.prepare("SELECT value FROM settings WHERE key = 'tmdb_api_key'").get()?.value; // Re-fetch to be safe or just fail
+        return { success: false, error: err.message };
     }
 });
 

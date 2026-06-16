@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 interface ImportModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onImport: (category: string, status: string) => void;
+    onImport: (category: string, status: string, method: 'Manual' | 'TMDB') => void;
     fileData: { titleCount: number; path: string } | null;
 }
 
@@ -51,7 +51,7 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, onImport, fi
                     </div>
                 </div>
 
-                <div className="pt-6 flex justify-end gap-3">
+                <div className="pt-6 flex justify-end gap-3 flex-wrap">
                     <button
                         onClick={onClose}
                         className="px-4 py-2 text-gray-300 hover:text-white"
@@ -59,10 +59,16 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, onImport, fi
                         Cancel
                     </button>
                     <button
-                        onClick={() => onImport(category, status)}
-                        className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-medium"
+                        onClick={() => onImport(category, status, 'Manual')}
+                        className="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded font-medium"
                     >
-                        Start Import
+                        Import Manually
+                    </button>
+                    <button
+                        onClick={() => onImport(category, status, 'TMDB')}
+                        className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-medium shadow-lg hover:shadow-blue-500/20"
+                    >
+                        Import via TMDB
                     </button>
                 </div>
             </div>
