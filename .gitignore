@@ -24,3 +24,9 @@ dist-ssr
 *.sw?
 
 dist-exe
+
+# Environment variables
+.env
+.env.local
+.env.*
+test_books.cjs

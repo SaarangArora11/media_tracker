@@ -66,9 +66,15 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, onImport, fi
                     </button>
                     <button
                         onClick={() => onImport(category, status, 'TMDB')}
-                        className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-medium shadow-lg hover:shadow-blue-500/20"
+                        className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium shadow-lg hover:shadow-blue-500/20 text-sm transition-all flex items-center gap-1.5"
                     >
-                        Import via TMDB
+                        {category === 'Books' ? (
+                            <><span>📖</span> Import via Google Books</>
+                        ) : category === 'Anime' || category === 'Manga' ? (
+                            <><span>🌸</span> Import via AniList</>
+                        ) : (
+                            <><span>🎬</span> Import via TMDB</>
+                        )}
                     </button>
                 </div>
             </div>

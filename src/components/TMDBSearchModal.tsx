@@ -14,11 +14,13 @@ export default function TMDBSearchModal({ isOpen, onClose, onSelect, onSkip, ini
     const [searchCategory, setSearchCategory] = useState(initialCategory || 'Movies'); // Local state for category
     const [results, setResults] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
+    const [errorMessage, setErrorMessage] = useState<{ code?: string | number; message: string } | null>(null);
 
     useEffect(() => {
         if (isOpen) {
             setQuery(initialQuery);
             setSearchCategory(initialCategory || 'Movies');
+            setErrorMessage(null);
             if (initialQuery) handleSearch(initialQuery, initialCategory || 'Movies');
             else {
                 setResults([]);
@@ -29,21 +31,41 @@ export default function TMDBSearchModal({ isOpen, onClose, onSelect, onSkip, ini
     const handleSearch = async (q: string, cat: string) => {
         if (!q.trim()) return;
         setLoading(true);
-        // passing 'All' or user selection to backend
-        const res = await window.electronAPI.invoke('tmdb-search', q.trim(), cat);
-        setResults(res || []);
-        setLoading(false);
+        setErrorMessage(null);
+        try {
+            const res = await window.electronAPI.invoke('tmdb-search', q.trim(), cat);
+            if (res && res.success === false) {
+                setResults([]);
+                setErrorMessage({
+                    code: res.code || 'SEARCH_ERROR',
+                    message: res.error || 'Failed to search TMDB'
+                });
+            } else if (res && res.success && Array.isArray(res.results)) {
+                setResults(res.results);
+            } else if (Array.isArray(res)) {
+                setResults(res);
+            } else {
+                setResults([]);
+            }
+        } catch (err: any) {
+            setResults([]);
+            setErrorMessage({
+                code: err?.code || 'IPC_ERROR',
+                message: err?.message || 'Failed to communicate with TMDB search service'
+            });
+        } finally {
+            setLoading(false);
+        }
     };
-
-    // ... (handleResultSelect remains same)
 
     const handleResultSelect = async (result: any) => {
         setLoading(true);
+        setErrorMessage(null);
         try {
             // Fetch full details (director, etc.)
             const details = await window.electronAPI.invoke('tmdb-get-details', result.id, result.media_type || searchCategory);
 
-            if (details && !details.error) {
+            if (details && details.success !== false) {
                 onSelect({
                     title: details.title,
                     poster: details.localImagePath,
@@ -52,14 +74,18 @@ export default function TMDBSearchModal({ isOpen, onClose, onSelect, onSkip, ini
                     year: result.year,
                     media_type: result.media_type // Pass media_type back
                 });
-                // onClose(); // Parent handles closing or next item
             } else {
-                console.error("Failed to fetch details:", details?.error);
-                alert("Failed to fetch details from TMDB. Please try again.");
+                const errCode = details?.code || 'DETAILS_FETCH_FAILED';
+                const errMsg = details?.error || 'Failed to fetch details from TMDB.';
+                setErrorMessage({ code: errCode, message: errMsg });
+                alert(`Failed to add movie via TMDB\n\nError Code: ${errCode}\nError Message: ${errMsg}`);
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error("Selection error:", error);
-            alert("An error occurred while fetching details.");
+            const errCode = error?.code || 'UNKNOWN_ERROR';
+            const errMsg = error?.message || 'An error occurred while fetching details.';
+            setErrorMessage({ code: errCode, message: errMsg });
+            alert(`Failed to add movie via TMDB\n\nError Code: ${errCode}\nError Message: ${errMsg}`);
         } finally {
             setLoading(false);
         }
@@ -99,6 +125,16 @@ export default function TMDBSearchModal({ isOpen, onClose, onSelect, onSkip, ini
                 </div>
 
                 <div className="p-6 space-y-4">
+                    {errorMessage && (
+                        <div className="bg-red-900/40 border border-red-500/50 text-red-200 px-4 py-3 rounded-lg text-sm flex items-center justify-between gap-3 shadow-inner">
+                            <div>
+                                <span className="font-bold text-red-400">Error [{errorMessage.code}]:</span>{' '}
+                                <span>{errorMessage.message}</span>
+                            </div>
+                            <button onClick={() => setErrorMessage(null)} className="text-red-400 hover:text-red-200 text-xs font-bold uppercase tracking-wider bg-red-950/50 px-2 py-1 rounded border border-red-800">Dismiss</button>
+                        </div>
+                    )}
+
                     <div className="flex gap-2">
                         <input
                             value={query}
@@ -134,7 +170,7 @@ export default function TMDBSearchModal({ isOpen, onClose, onSelect, onSkip, ini
                                     </div>
                                 </div>
                             ))}
-                            {results.length === 0 && !loading && <div className="col-span-full text-center py-10 text-gray-600">No results found</div>}
+                            {results.length === 0 && !loading && !errorMessage && <div className="col-span-full text-center py-10 text-gray-600">No results found</div>}
                         </div>
                     )}
                 </div>

@@ -12,6 +12,8 @@ const db = new Database(dbPath);
 // We need to handle the migration for 'Manga' support which requires updating the CHECK constraint.
 // SQLite doesn't support ALTER COLUMN for CHECK constraints, so we must recreate the table if needed.
 const tmdb = require('./tmdb.cjs');
+const books = require('./books.cjs');
+const anilist = require('./anilist.cjs');
 const initSchema = () => {
     // Check if 'settings' table exists
     const settingsTable = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='settings'").get();
@@ -424,24 +426,65 @@ ipcMain.handle('get-setting', (event, key) => {
         return null;
     }
 });
+const getSettingWithEnv = (key, envName) => {
+    try {
+        const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
+        if (row && row.value && row.value.trim()) {
+            return row.value.trim();
+        }
+    }
+    catch (e) {
+        // Ignore read error
+    }
+    if (envName && process.env[envName]) {
+        return process.env[envName].trim();
+    }
+    // Fallback: check .env file in root
+    try {
+        const envPath = path.join(process.cwd(), '.env');
+        if (fs.existsSync(envPath)) {
+            const envContent = fs.readFileSync(envPath, 'utf8');
+            if (envName) {
+                const match = envContent.match(new RegExp(`${envName}\\s*=\\s*(["']?)([^"'\\r\\n]+)\\1`));
+                if (match)
+                    return match[2].trim();
+            }
+        }
+    }
+    catch (e) {
+        // Ignore fallback error
+    }
+    return null;
+};
 // TMDB Handlers
 ipcMain.handle('tmdb-search', async (event, query, category) => {
     try {
-        const apiKey = db.prepare("SELECT value FROM settings WHERE key = 'tmdb_api_key'").get()?.value;
-        if (!apiKey)
-            throw new Error('API Key not found');
-        return await tmdb.search(query, category || 'Movies', apiKey);
+        const apiKey = getSettingWithEnv('tmdb_api_key', 'TMDB_API_KEY');
+        if (!apiKey) {
+            const err = new Error('TMDB API Key is missing. Please configure it in Settings.');
+            err.code = 'NO_API_KEY';
+            throw err;
+        }
+        const results = await tmdb.search(query, category || 'Movies', apiKey);
+        return { success: true, results };
     }
     catch (err) {
         console.error('tmdb-search error:', err);
-        return { success: false, error: err.message };
+        return {
+            success: false,
+            error: err.message || 'Unknown search error',
+            code: err.code || 'SEARCH_FAILED'
+        };
     }
 });
 ipcMain.handle('tmdb-get-details', async (event, id, type) => {
     try {
-        const apiKey = db.prepare("SELECT value FROM settings WHERE key = 'tmdb_api_key'").get()?.value;
-        if (!apiKey)
-            throw new Error('API Key not found');
+        const apiKey = getSettingWithEnv('tmdb_api_key', 'TMDB_API_KEY');
+        if (!apiKey) {
+            const err = new Error('TMDB API Key is missing. Please configure it in Settings.');
+            err.code = 'NO_API_KEY';
+            throw err;
+        }
         const details = await tmdb.getDetails(id, type, apiKey);
         // Download Poster if available
         if (details.poster_path) {
@@ -457,16 +500,108 @@ ipcMain.handle('tmdb-get-details', async (event, id, type) => {
             }
             catch (imgErr) {
                 console.error("Failed to download image:", imgErr);
-                // Fallback to URL or null if download fails, but keeping URL might be useful
-                // details.localImagePath = details.poster_path; 
             }
         }
-        return details;
+        return { success: true, ...details };
     }
     catch (err) {
         console.error('tmdb-get-details error:', err);
-        const apiKey = db.prepare("SELECT value FROM settings WHERE key = 'tmdb_api_key'").get()?.value; // Re-fetch to be safe or just fail
-        return { success: false, error: err.message };
+        return {
+            success: false,
+            error: err.message || 'Unknown details error',
+            code: err.code || 'DETAILS_FAILED'
+        };
+    }
+});
+// Google Books Handlers
+ipcMain.handle('books-search', async (event, query) => {
+    try {
+        const apiKey = getSettingWithEnv('google_books_api_key', 'GOOGLE_BOOKS_API_KEY');
+        const results = await books.search(query, apiKey);
+        return { success: true, results };
+    }
+    catch (err) {
+        console.error('books-search error:', err);
+        return {
+            success: false,
+            error: err.message || 'Unknown search error',
+            code: err.code || 'BOOKS_SEARCH_FAILED'
+        };
+    }
+});
+ipcMain.handle('books-get-details', async (event, id) => {
+    try {
+        const apiKey = getSettingWithEnv('google_books_api_key', 'GOOGLE_BOOKS_API_KEY');
+        const details = await books.getDetails(id, apiKey);
+        if (details.poster_path) {
+            const coversDir = path.join(app.getPath('userData'), 'covers');
+            if (!fs.existsSync(coversDir)) {
+                fs.mkdirSync(coversDir, { recursive: true });
+            }
+            const safeId = String(id).replace(/[^a-zA-Z0-9_-]/g, '_');
+            const fileName = `book_${safeId}_${Date.now()}.jpg`;
+            const localPath = path.join(coversDir, fileName);
+            try {
+                await books.downloadImage(details.poster_path, localPath);
+                details.localImagePath = localPath;
+            }
+            catch (imgErr) {
+                console.error("Failed to download book cover:", imgErr);
+            }
+        }
+        return { success: true, ...details };
+    }
+    catch (err) {
+        console.error('books-get-details error:', err);
+        return {
+            success: false,
+            error: err.message || 'Unknown details error',
+            code: err.code || 'BOOKS_DETAILS_FAILED'
+        };
+    }
+});
+// AniList Handlers (Anime & Manga)
+ipcMain.handle('anilist-search', async (event, query, category) => {
+    try {
+        const results = await anilist.search(query, category || 'Anime');
+        return { success: true, results };
+    }
+    catch (err) {
+        console.error('anilist-search error:', err);
+        return {
+            success: false,
+            error: err.message || 'Unknown search error',
+            code: err.code || 'ANILIST_SEARCH_FAILED'
+        };
+    }
+});
+ipcMain.handle('anilist-get-details', async (event, id, category) => {
+    try {
+        const details = await anilist.getDetails(id, category || 'Anime');
+        if (details.poster_path) {
+            const coversDir = path.join(app.getPath('userData'), 'covers');
+            if (!fs.existsSync(coversDir)) {
+                fs.mkdirSync(coversDir, { recursive: true });
+            }
+            const fileName = `anilist_${id}_${Date.now()}.jpg`;
+            const localPath = path.join(coversDir, fileName);
+            try {
+                await anilist.downloadImage(details.poster_path, localPath);
+                details.localImagePath = localPath;
+            }
+            catch (imgErr) {
+                console.error("Failed to download anime/manga cover:", imgErr);
+            }
+        }
+        return { success: true, ...details };
+    }
+    catch (err) {
+        console.error('anilist-get-details error:', err);
+        return {
+            success: false,
+            error: err.message || 'Unknown details error',
+            code: err.code || 'ANILIST_DETAILS_FAILED'
+        };
     }
 });
 module.exports = db;

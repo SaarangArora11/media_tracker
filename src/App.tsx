@@ -4,7 +4,7 @@ import MediaCard from './components/MediaCard';
 import AddEditModal from './components/AddEditModal';
 import ImportModal from './components/ImportModal';
 import SettingsModal from './components/SettingsModal';
-import TMDBSearchModal from './components/TMDBSearchModal';
+import MetadataSearchModal from './components/MetadataSearchModal';
 import type { MediaItem } from './types';
 
 function App() {
@@ -21,8 +21,10 @@ function App() {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isImportModalOpen, setIsImportModalOpen] = useState(false);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-    const [isTMDBSearchOpen, setIsTMDBSearchOpen] = useState(false);
+    const [isMetadataSearchOpen, setIsMetadataSearchOpen] = useState(false);
     const [showAddMenu, setShowAddMenu] = useState(false);
+    const [searchCategory, setSearchCategory] = useState<string>('Movies');
+    const [searchQuery, setSearchQuery] = useState<string>('');
 
     const [editingItem, setEditingItem] = useState<MediaItem | undefined>(undefined);
 
@@ -31,7 +33,6 @@ function App() {
     const [importCategory, setImportCategory] = useState<string>('Movies');
     const [importStatus, setImportStatus] = useState<string>('To Consume');
     const [isProcessingImport, setIsProcessingImport] = useState(false);
-    const [importSearchQuery, setImportSearchQuery] = useState('');
 
     useEffect(() => { loadItems(); }, []);
 
@@ -48,10 +49,17 @@ function App() {
     };
 
     const handleSave = async (item: MediaItem) => {
-        if (item.id) await window.electronAPI.invoke('update-item', item);
-        else await window.electronAPI.invoke('add-item', item);
-        loadItems();
-        setIsModalOpen(false);
+        try {
+            if (item.id) await window.electronAPI.invoke('update-item', item);
+            else await window.electronAPI.invoke('add-item', item);
+            loadItems();
+            setIsModalOpen(false);
+        } catch (err: any) {
+            console.error('Failed to save item:', err);
+            const errCode = err?.code || 'DB_SAVE_ERROR';
+            const errMsg = err?.message || 'Failed to save item to database.';
+            alert(`Failed to Save Entry\n\nError Code: ${errCode}\nError Message: ${errMsg}`);
+        }
     };
 
     const handleDelete = async (id: number) => {
@@ -72,7 +80,7 @@ function App() {
         } else if (res.message && res.message !== 'Selection cancelled') alert(res.message);
     };
 
-    // Triggered when user selects "Manual" or "Via TMDB" in Import Modal
+    // Triggered when user selects "Manual" or "Online" in Import Modal
     const handleBulkImportStart = async (category: string, status: string, method: 'Manual' | 'TMDB') => {
         if (method === 'Manual') {
             const res = await window.electronAPI.invoke('bulk-add-items', { titles: importedTitles, category, status });
@@ -84,89 +92,106 @@ function App() {
                 setImportFileData(null);
             }
         } else {
-            // Start TMDB Loop
+            // Start Online Metadata Loop (TMDB / AniList / Google Books)
             setImportCategory(category);
             setImportStatus(status);
             setImportQueue([...importedTitles]);
             setIsImportModalOpen(false);
             setIsProcessingImport(true);
-            setImportSearchQuery(importedTitles[0]); // Start first
-            setIsTMDBSearchOpen(true);
+            setSearchQuery(importedTitles[0]); // Start first
+            setSearchCategory(category);
+            setIsMetadataSearchOpen(true);
         }
     };
 
-    const handleTMDBSelect = (item: any) => {
-        // Map TMDB media_type to App Category
-        let derivedCategory: any = 'Movies';
+    const handleMetadataSelect = async (item: any) => {
+        let derivedCategory: any = item.category || 'Movies';
         if (item.media_type === 'tv') derivedCategory = 'Series';
         if (item.media_type === 'movie') derivedCategory = 'Movies';
-
-        // If in bulk import, prioritize the import category, but maybe respecting the item is better?
-        // Usually bulk import is into a specific list. 
-        // If I am importing "Series", I want them to be Series.
-        // But if I find a Movie in a Series import? 
-        // Let's stick to importCategory if processing import, but use derived for Single Add.
+        if (item.media_type === 'Books') derivedCategory = 'Books';
+        if (item.media_type === 'Anime') derivedCategory = 'Anime';
+        if (item.media_type === 'Manga') derivedCategory = 'Manga';
 
         if (isProcessingImport) {
             // Save current item from queue
             const newItem: MediaItem = {
                 title: item.title,
-                category: importCategory as any, // Respect the Bulk Import target
+                category: (importCategory || derivedCategory) as any, // Respect the Bulk Import target
                 status: importStatus as any,
                 genre: item.genre,
                 image_path: item.poster,
+                author: item.author,
                 director: item.director,
+                studio: item.studio,
                 priority: 'Normal'
             };
-            window.electronAPI.invoke('add-item', newItem); // Async but don't wait
+            try {
+                await window.electronAPI.invoke('add-item', newItem);
+            } catch (err: any) {
+                console.error('Bulk metadata item save error:', err);
+                const errCode = err?.code || 'DB_BULK_ADD_ERROR';
+                const errMsg = err?.message || 'Failed to save item to database.';
+                alert(`Failed to Add Item "${item.title}" via Metadata Service\n\nError Code: ${errCode}\nError Message: ${errMsg}`);
+            }
 
-            // Move to next
+            // Move to next in queue
             const nextQueue = importQueue.slice(1);
             if (nextQueue.length > 0) {
                 setImportQueue(nextQueue);
-                setImportSearchQuery(nextQueue[0]);
+                setSearchQuery(nextQueue[0]);
                 // Keep modal open, just update query
             } else {
                 // Done
                 setIsProcessingImport(false);
-                setIsTMDBSearchOpen(false);
+                setIsMetadataSearchOpen(false);
                 loadItems();
                 alert('Bulk Import Completed!');
                 setImportedTitles([]);
                 setImportFileData(null);
             }
         } else {
-            // Single Item Add
-            setEditingItem({
+            // Single Item Add or Autofill
+            setEditingItem(prev => ({
+                ...(prev || {}),
                 title: item.title,
-                category: derivedCategory, // Use derived category
-                status: 'Watching',
-                genre: item.genre,
-                image_path: item.poster,
-                director: item.director
-            } as any);
-            setIsTMDBSearchOpen(false);
+                category: derivedCategory,
+                status: prev?.status || 'Watching',
+                genre: item.genre || prev?.genre,
+                author: item.author || prev?.author,
+                director: item.director || prev?.director,
+                studio: item.studio || prev?.studio,
+                image_path: item.poster || prev?.image_path,
+                review: item.overview || prev?.review
+            } as any));
+            setIsMetadataSearchOpen(false);
             setIsModalOpen(true);
         }
     };
 
-    const handleTMDBSkip = () => {
+    const handleSearchSkip = () => {
         if (isProcessingImport) {
             // Move to next without adding
             const nextQueue = importQueue.slice(1);
             if (nextQueue.length > 0) {
                 setImportQueue(nextQueue);
-                setImportSearchQuery(nextQueue[0]);
+                setSearchQuery(nextQueue[0]);
             } else {
                 // Done
                 setIsProcessingImport(false);
-                setIsTMDBSearchOpen(false);
+                setIsMetadataSearchOpen(false);
                 loadItems();
                 alert('Bulk Import Completed (with Skips)!');
                 setImportedTitles([]);
                 setImportFileData(null);
             }
         }
+    };
+
+    const handleOpenAutofill = (title: string, category: string) => {
+        setSearchQuery(title);
+        setSearchCategory(category);
+        setIsModalOpen(false);
+        setIsMetadataSearchOpen(true);
     };
 
     const { uniqueGenres, uniqueTags, uniqueLocations } = useMemo(() => {
@@ -254,10 +279,13 @@ function App() {
                                     + Add Entry
                                 </button>
                                 {showAddMenu && (
-                                    <div className="absolute right-0 mt-2 w-48 bg-[#1e1e1e] border border-gray-700 rounded-lg shadow-xl overflow-hidden z-50">
-                                        <button onClick={() => { setEditingItem(undefined); setIsModalOpen(true); setShowAddMenu(false); }} className="w-full text-left px-4 py-3 hover:bg-white/5 text-sm">Manual</button>
-                                        <button onClick={() => { setIsTMDBSearchOpen(true); setShowAddMenu(false); }} className="w-full text-left px-4 py-3 hover:bg-white/5 text-sm flex justify-between items-center group">
-                                            Via TMDB <span className="bg-blue-600/20 text-blue-400 text-[10px] px-1.5 py-0.5 rounded group-hover:bg-blue-600 group-hover:text-white transition-colors">NEW</span>
+                                    <div className="absolute right-0 mt-2 w-56 bg-[#1e1e1e] border border-gray-700 rounded-lg shadow-xl overflow-hidden z-50">
+                                        <button onClick={() => { setEditingItem(undefined); setIsModalOpen(true); setShowAddMenu(false); }} className="w-full text-left px-4 py-3 hover:bg-white/5 text-sm flex items-center gap-2">
+                                            <span>✍️</span> Manual Entry
+                                        </button>
+                                        <button onClick={() => { setSearchQuery(''); setSearchCategory(activeTab === 'Consumed' ? 'Movies' : 'Movies'); setIsMetadataSearchOpen(true); setShowAddMenu(false); }} className="w-full text-left px-4 py-3 hover:bg-white/5 text-sm flex justify-between items-center group">
+                                            <span className="flex items-center gap-2"><span>🔍</span> Search Online</span>
+                                            <span className="bg-blue-600/20 text-blue-400 text-[10px] px-1.5 py-0.5 rounded group-hover:bg-blue-600 group-hover:text-white transition-colors">ALL</span>
                                         </button>
                                     </div>
                                 )}
@@ -366,6 +394,7 @@ function App() {
                 existingGenres={uniqueGenres}
                 existingTags={uniqueTags}
                 existingLocations={uniqueLocations}
+                onSearchOnline={handleOpenAutofill}
             />
 
             <ImportModal
@@ -375,7 +404,14 @@ function App() {
                 onImport={handleBulkImportStart}
             />
             <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
-            <TMDBSearchModal isOpen={isTMDBSearchOpen} onClose={() => { setIsTMDBSearchOpen(false); setIsProcessingImport(false); }} onSelect={handleTMDBSelect} onSkip={isProcessingImport ? handleTMDBSkip : undefined} initialQuery={isProcessingImport ? importSearchQuery : undefined} category={isProcessingImport ? importCategory : undefined} />
+            <MetadataSearchModal
+                isOpen={isMetadataSearchOpen}
+                onClose={() => { setIsMetadataSearchOpen(false); setIsProcessingImport(false); }}
+                onSelect={handleMetadataSelect}
+                onSkip={isProcessingImport ? handleSearchSkip : undefined}
+                initialQuery={searchQuery}
+                category={searchCategory}
+            />
         </div>
     );
 }

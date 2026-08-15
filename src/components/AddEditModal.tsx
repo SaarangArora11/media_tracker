@@ -9,6 +9,7 @@ interface AddEditModalProps {
     existingGenres: string[];
     existingTags: string[];
     existingLocations?: string[];
+    onSearchOnline?: (title: string, category: string) => void;
 }
 
 const AddEditModal: React.FC<AddEditModalProps> = ({
@@ -18,7 +19,8 @@ const AddEditModal: React.FC<AddEditModalProps> = ({
     item,
     existingGenres,
     existingTags,
-    existingLocations = []
+    existingLocations = [],
+    onSearchOnline
 }) => {
     const defaultItem: MediaItem = {
         title: '',
@@ -194,12 +196,24 @@ const AddEditModal: React.FC<AddEditModalProps> = ({
                     {/* Basic Info */}
                     <div className="grid grid-cols-2 gap-4">
                         <div className="col-span-2 space-y-2">
-                            <label className="text-sm text-gray-400">Title</label>
+                            <div className="flex justify-between items-center">
+                                <label className="text-sm text-gray-400">Title</label>
+                                {onSearchOnline && (
+                                    <button
+                                        type="button"
+                                        onClick={() => onSearchOnline(formData.title || '', formData.category || 'Movies')}
+                                        className="text-xs text-blue-400 hover:text-blue-300 font-medium flex items-center gap-1 hover:underline transition-all"
+                                    >
+                                        <span>🔍</span> Search & Autofill Metadata
+                                    </button>
+                                )}
+                            </div>
                             <input
                                 name="title"
                                 required
                                 value={formData.title}
                                 onChange={handleChange}
+                                placeholder="Enter title..."
                                 className="w-full bg-[#333] border border-gray-600 rounded p-2 text-white focus:border-blue-500 outline-none"
                             />
                         </div>

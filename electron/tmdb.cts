@@ -1,49 +1,49 @@
-const https = require('https');
 const fs = require('fs');
 
-const makeRequest = (url: string, token?: string, attempts = 3) => {
-    return new Promise((resolve, reject) => {
-        const options: any = {
-            headers: {
-                'User-Agent': 'MediaTracker/1.0.0 (electron)',
-                'Accept': 'application/json',
-                'Connection': 'close'
-            },
-            family: 4 // Enforce IPv4
-        };
+const makeRequest = async (url: string, token?: string, attempts = 3): Promise<any> => {
+    const headers: Record<string, string> = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) MediaTracker/1.0.0 Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json'
+    };
 
-        if (token) {
-            options.headers['Authorization'] = `Bearer ${token}`;
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    try {
+        const response = await fetch(url, { headers });
+        let data: any = null;
+        try {
+            data = await response.json();
+        } catch (e) {
+            // non-JSON response
         }
 
-        const req = https.get(url, options, (res: any) => {
-            let data = '';
-            res.on('data', (chunk: any) => data += chunk);
-            res.on('end', () => {
-                try {
-                    // Check for non-200 status codes
-                    if (res.statusCode < 200 || res.statusCode >= 300) {
-                        return reject(new Error(`TMDB API Error: ${res.statusCode} ${res.statusMessage}`));
-                    }
-                    resolve(JSON.parse(data));
-                } catch (e) {
-                    reject(e);
-                }
-            });
-        });
+        if (!response.ok) {
+            const statusMsg = data?.status_message || response.statusText || 'TMDB API Request Failed';
+            const err: any = new Error(`TMDB API Error [Code ${response.status}]: ${statusMsg}`);
+            err.code = response.status;
+            err.statusMessage = statusMsg;
+            throw err;
+        }
 
-        req.on('error', (err: any) => {
-            // Retry mechanisms
-            if (attempts > 1) {
-                console.log(`Retrying TMDB request... (${attempts - 1} left)`);
-                setTimeout(() => {
-                    makeRequest(url, token, attempts - 1).then(resolve).catch(reject);
-                }, 1000); // 1 second delay
-            } else {
-                reject(err);
-            }
-        });
-    });
+        if (data !== null) {
+            return data;
+        } else {
+            const err: any = new Error(`TMDB Error [Code ${response.status}]: Invalid JSON response`);
+            err.code = response.status;
+            throw err;
+        }
+    } catch (err: any) {
+        const errCode = err.code || err.cause?.code || 'NET_ERROR';
+        if (attempts > 1 && (errCode === 'ECONNRESET' || errCode === 'ETIMEDOUT' || err.name === 'FetchError' || err.message?.includes('fetch failed'))) {
+            console.log(`Retrying TMDB request (${errCode})... (${attempts - 1} left)`);
+            await new Promise(r => setTimeout(r, 1000));
+            return makeRequest(url, token, attempts - 1);
+        }
+        if (!err.code) err.code = errCode;
+        throw err;
+    }
 };
 
 const GENRES: Record<number, string> = {
@@ -77,22 +77,17 @@ module.exports = {
             url += `&api_key=${apiKey}`; // Assume v3 API Key
         }
 
-        try {
-            const data: any = await makeRequest(url, token);
-            if (!data.results) return [];
+        const data: any = await makeRequest(url, token);
+        if (!data || !data.results) return [];
 
-            return data.results.slice(0, 5).map((r: any) => ({
-                id: r.id,
-                title: r.title || r.name, // Movie is title, TV is name
-                year: (r.release_date || r.first_air_date || '').split('-')[0],
-                poster_path: r.poster_path ? `https://image.tmdb.org/t/p/w200${r.poster_path}` : null,
-                overview: r.overview,
-                media_type: r.media_type || type // 'movie' or 'tv'
-            }));
-        } catch (e) {
-            console.error('TMDB Search Error:', e);
-            return [];
-        }
+        return data.results.slice(0, 5).map((r: any) => ({
+            id: r.id,
+            title: r.title || r.name, // Movie is title, TV is name
+            year: (r.release_date || r.first_air_date || '').split('-')[0],
+            poster_path: r.poster_path ? `https://image.tmdb.org/t/p/w200${r.poster_path}` : null,
+            overview: r.overview,
+            media_type: r.media_type || type // 'movie' or 'tv'
+        }));
     },
 
     getDetails: async (id: number, type: string, apiKey: string) => {
@@ -127,19 +122,23 @@ module.exports = {
         }
     },
 
-    downloadImage: (url: string, destPath: string) => {
-        return new Promise((resolve, reject) => {
-            const file = fs.createWriteStream(destPath);
-            https.get(url, (response: any) => {
-                response.pipe(file);
-                file.on('finish', () => {
-                    file.close();
-                    resolve(true);
-                });
-            }).on('error', (err: any) => {
-                fs.unlink(destPath, () => { });
-                reject(err);
+    downloadImage: async (url: string, destPath: string) => {
+        try {
+            const res = await fetch(url, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) MediaTracker/1.0.0 Chrome/120.0.0.0 Safari/537.36'
+                }
             });
-        });
+            if (!res.ok) throw new Error(`Failed to fetch image [Code ${res.status}]: ${res.statusText}`);
+            const arrayBuffer = await res.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            await fs.promises.writeFile(destPath, buffer);
+            return true;
+        } catch (err: any) {
+            if (fs.existsSync(destPath)) {
+                try { fs.unlinkSync(destPath); } catch (e) {}
+            }
+            throw err;
+        }
     }
 };
