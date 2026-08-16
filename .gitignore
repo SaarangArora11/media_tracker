@@ -30,3 +30,4 @@ dist-exe
 .env.local
 .env.*
 test_books.cjs
+*.ipynb

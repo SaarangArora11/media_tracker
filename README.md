@@ -10,11 +10,11 @@ A modern, localized, offline-first desktop application to organize, log, and dis
 
 | **Main Dashboard & Library** | **Universal Metadata Search** |
 | :---: | :---: |
-| ![Main Dashboard](https://via.placeholder.com/600x380/1e1e1e/60a5fa?text=Main+Dashboard+View) <br> *(Replace: `./docs/screenshots/dashboard.png`)* | ![Metadata Search](https://via.placeholder.com/600x380/1e1e1e/ec4899?text=Universal+Metadata+Search) <br> *(Replace: `./docs/screenshots/search-modal.png`)* |
+| ![Main Dashboard](./docs/screenshots/dashboard.png) | ![Metadata Search](./docs/screenshots/search-modal.png) |
 
 | **Add & Edit Entry Modal** | **Settings & API Configuration** |
 | :---: | :---: |
-| ![Add Entry Modal](https://via.placeholder.com/600x380/1e1e1e/10b981?text=Add+Entry+Form+%2B+Autofill) <br> *(Replace: `./docs/screenshots/add-entry.png`)* | ![Settings Modal](https://via.placeholder.com/600x380/1e1e1e/8b5cf6?text=API+Settings+%26+Configuration) <br> *(Replace: `./docs/screenshots/settings.png`)* |
+| ![Add Entry Modal](./docs/screenshots/add-entry.png) | ![Settings Modal](./docs/screenshots/settings.png) |
 
 ---
 
