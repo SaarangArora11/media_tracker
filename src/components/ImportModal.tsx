@@ -9,7 +9,7 @@ interface ImportModalProps {
 
 const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, onImport, fileData }) => {
     const [category, setCategory] = useState('Movies');
-    const [status, setStatus] = useState('Watching');
+    const [status, setStatus] = useState('To Consume');
 
     if (!isOpen || !fileData) return null;
 
@@ -44,7 +44,7 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, onImport, fi
                             onChange={(e) => setStatus(e.target.value)}
                             className="w-full bg-[#2a2a2a] border border-gray-700 rounded p-2 text-white focus:border-blue-500 outline-none"
                         >
-                            {['Watching', 'To Consume', 'Consumed'].map(s => (
+                            {['Consuming', 'To Consume', 'Consumed'].map(s => (
                                 <option key={s} value={s}>{s}</option>
                             ))}
                         </select>

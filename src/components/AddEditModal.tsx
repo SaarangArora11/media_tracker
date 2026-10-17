@@ -30,7 +30,9 @@ const AddEditModal: React.FC<AddEditModalProps> = ({
         location: '',
         genre: '',
         tags: '',
-        image_path: ''
+        image_path: '',
+        runtime: null,
+        page_count: null
     };
 
     const [formData, setFormData] = useState<MediaItem>(defaultItem);
@@ -50,7 +52,9 @@ const AddEditModal: React.FC<AddEditModalProps> = ({
         const { name, value } = e.target;
         setFormData(prev => ({
             ...prev,
-            [name]: name === 'rating' ? Number(value) : value
+            [name]: name === 'rating' || name === 'runtime' || name === 'page_count'
+                ? (value === '' ? null : Number(value))
+                : value
         }));
     };
 
@@ -132,7 +136,19 @@ const AddEditModal: React.FC<AddEditModalProps> = ({
                                 className="w-full bg-[#333] border border-gray-600 rounded p-2 text-white focus:border-blue-500 outline-none"
                             />
                         </div>
-                        <div className="col-span-2 space-y-2">
+                        <div className="space-y-2">
+                            <label className="text-sm text-gray-400">Duration (Minutes)</label>
+                            <input
+                                type="number"
+                                name="runtime"
+                                min="0"
+                                placeholder="e.g. 120"
+                                value={formData.runtime ?? ''}
+                                onChange={handleChange}
+                                className="w-full bg-[#333] border border-gray-600 rounded p-2 text-white focus:border-blue-500 outline-none"
+                            />
+                        </div>
+                        <div className="space-y-2">
                             <label className="text-sm text-gray-400">Actors</label>
                             <input
                                 name="actors"
@@ -146,14 +162,28 @@ const AddEditModal: React.FC<AddEditModalProps> = ({
                 )}
 
                 {isBook && (
-                    <div className="space-y-2">
-                        <label className="text-sm text-gray-400">Author/Mangaka</label>
-                        <input
-                            name="author"
-                            value={formData.author || ''}
-                            onChange={handleChange}
-                            className="w-full bg-[#333] border border-gray-600 rounded p-2 text-white focus:border-blue-500 outline-none"
-                        />
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                            <label className="text-sm text-gray-400">Author/Mangaka</label>
+                            <input
+                                name="author"
+                                value={formData.author || ''}
+                                onChange={handleChange}
+                                className="w-full bg-[#333] border border-gray-600 rounded p-2 text-white focus:border-blue-500 outline-none"
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm text-gray-400">Page Count</label>
+                            <input
+                                type="number"
+                                name="page_count"
+                                min="0"
+                                placeholder="e.g. 350"
+                                value={formData.page_count ?? ''}
+                                onChange={handleChange}
+                                className="w-full bg-[#333] border border-gray-600 rounded p-2 text-white focus:border-blue-500 outline-none"
+                            />
+                        </div>
                     </div>
                 )}
 
@@ -240,7 +270,7 @@ const AddEditModal: React.FC<AddEditModalProps> = ({
                                 onChange={handleChange}
                                 className="w-full bg-[#333] border border-gray-600 rounded p-2 text-white focus:border-blue-500 outline-none"
                             >
-                                {['Watching', 'To Consume', 'Consumed'].map(s => (
+                                {['Consuming', 'To Consume', 'Consumed'].map(s => (
                                     <option key={s} value={s}>{s}</option>
                                 ))}
                             </select>

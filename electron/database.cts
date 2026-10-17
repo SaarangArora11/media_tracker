@@ -28,15 +28,15 @@ const initSchema = () => {
     // Robust Schema Check: Read the actual CREATE statement
     const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='items'").get();
 
-    // If table doesn't exist, create it fresh
+    // If table doesn't exist, create it fresh (V3)
     if (!tableInfo) {
-        console.log("Initializing new database...");
+        console.log("Initializing new database (V3)...");
         db.exec(`
           CREATE TABLE items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             category TEXT NOT NULL CHECK(category IN ('Movies', 'Series', 'Anime', 'Books', 'Games', 'Manga')),
-            status TEXT NOT NULL CHECK(status IN ('Watching', 'To Consume', 'Consumed')),
+            status TEXT NOT NULL CHECK(status IN ('Consuming', 'To Consume', 'Consumed', 'Watching')),
             date_finished TEXT,
             rating INTEGER,
             review TEXT,
@@ -51,62 +51,46 @@ const initSchema = () => {
             platform TEXT,
             priority TEXT DEFAULT 'Normal',
             location TEXT,
+            runtime INTEGER,
+            page_count INTEGER,
+            source TEXT,
+            source_id TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
           )
         `);
-        db.pragma('user_version = 2');
+        db.pragma('user_version = 3');
         return;
     }
 
-    // Check current schema version
-    // Version 0: Initial
-    // Version 1: Manga Support + Priority
-    // Version 2: Location Support
     const currentVersion = db.pragma('user_version', { simple: true });
     console.log(`Current DB Version: ${currentVersion}`);
 
-    if (currentVersion < 2) {
-        // Perform v2 migration (Add Location)
-        console.log("Migrating database to v2 (Location Support)...");
-
-        const columns = db.prepare("PRAGMA table_info(items)").all().map((c: any) => c.name);
-        if (!columns.includes('location')) {
-            try {
-                db.exec("ALTER TABLE items ADD COLUMN location TEXT");
-                console.log("Added 'location' column.");
-            } catch (err) {
-                console.error("Failed to add location column:", err);
-            }
-        }
-
-        db.pragma('user_version = 2');
-        console.log("Migration to v2 complete.");
-    }
-
-    // Fallback Verification
-    const finalColumns = db.prepare("PRAGMA table_info(items)").all().map((c: any) => c.name);
-    if (!finalColumns.includes('category')) {
-        // ... (Original creation logic if needed, but we rely on migration above for existing DBs)
-    }
-
-    // Check if 'Manga' is missing from the schema definition
+    // Check if 'Consuming' is present in CHECK constraint
     const currentSchema = tableInfo.sql || "";
+    const hasConsuming = currentSchema.includes("'Consuming'");
     const hasManga = currentSchema.includes("'Manga'");
 
-    if (!hasManga) {
-        console.log("Detected missing 'Manga' support. Forcing migration...");
+    if (currentVersion < 3 || !hasConsuming || !hasManga) {
+        console.log("Migrating database to v3 (Consuming status, stats & source tracking)...");
+
+        // Convert any existing 'Watching' entries to 'Consuming'
+        try {
+            db.exec("UPDATE items SET status = 'Consuming' WHERE status = 'Watching'");
+        } catch (e) {
+            console.warn("Could not directly update Watching -> Consuming before schema rewrite", e);
+        }
 
         const transaction = db.transaction(() => {
             // Rename old table
             db.exec('ALTER TABLE items RENAME TO items_old');
 
-            // Create new table with Manga support
+            // Create new table with full V3 constraints & columns
             db.exec(`
               CREATE TABLE items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
                 category TEXT NOT NULL CHECK(category IN ('Movies', 'Series', 'Anime', 'Books', 'Games', 'Manga')),
-                status TEXT NOT NULL CHECK(status IN ('Watching', 'To Consume', 'Consumed')),
+                status TEXT NOT NULL CHECK(status IN ('Consuming', 'To Consume', 'Consumed', 'Watching')),
                 date_finished TEXT,
                 rating INTEGER,
                 review TEXT,
@@ -121,58 +105,70 @@ const initSchema = () => {
                 platform TEXT,
                 priority TEXT DEFAULT 'Normal',
                 location TEXT,
+                runtime INTEGER,
+                page_count INTEGER,
+                source TEXT,
+                source_id TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
               )
             `);
 
-            // Migrate Data
-            // Get columns from old table dynamically to be safe
+            // Migrate Data dynamically from old table
             const oldColumns = db.prepare("PRAGMA table_info(items_old)").all().map((c: any) => c.name);
             const validColumns = [
                 'id', 'title', 'category', 'status', 'date_finished', 'rating', 'review', 'image_path',
-                'genre', 'tags', 'author', 'director', 'writer', 'actors', 'studio', 'platform', 'priority', 'location', 'created_at'
+                'genre', 'tags', 'author', 'director', 'writer', 'actors', 'studio', 'platform', 'priority', 'location',
+                'runtime', 'page_count', 'source', 'source_id', 'created_at'
             ];
 
             const colsToCopy = validColumns.filter((c) => oldColumns.includes(c));
-            const colsString = colsToCopy.join(', '); // e.g. "id, title, category..."
+            const colsString = colsToCopy.join(', ');
 
             console.log(`Migrating columns: ${colsString}`);
             db.exec(`INSERT INTO items (${colsString}) SELECT ${colsString} FROM items_old`);
+
+            // Ensure any Watching status is now Consuming
+            db.exec("UPDATE items SET status = 'Consuming' WHERE status = 'Watching'");
 
             // Drop old table
             db.exec('DROP TABLE items_old');
         });
 
         transaction();
-        console.log("Manga support migration complete.");
-    } else {
-        console.log("Database schema already supports Manga.");
-    }
-
-    // Ensure the user_version is updated to the latest after all migrations
-    if (db.pragma('user_version', { simple: true }) < currentVersion) {
-        db.pragma(`user_version = ${currentVersion}`);
-        console.log(`Database user_version updated to ${currentVersion}.`);
+        db.pragma('user_version = 3');
+        console.log("Migration to v3 complete.");
     }
 };
 
 initSchema();
 
 // Verify and Add Columns (Fallback for minor updates, or if migrations were skipped/failed)
-const columnsToAdd = [
-    'genre', 'tags', 'author', 'director', 'writer', 'actors', 'studio', 'platform', 'priority', 'location'
+const columnsToAdd: Array<{ name: string; type: string; defaultVal: string }> = [
+    { name: 'genre', type: 'TEXT', defaultVal: 'NULL' },
+    { name: 'tags', type: 'TEXT', defaultVal: 'NULL' },
+    { name: 'author', type: 'TEXT', defaultVal: 'NULL' },
+    { name: 'director', type: 'TEXT', defaultVal: 'NULL' },
+    { name: 'writer', type: 'TEXT', defaultVal: 'NULL' },
+    { name: 'actors', type: 'TEXT', defaultVal: 'NULL' },
+    { name: 'studio', type: 'TEXT', defaultVal: 'NULL' },
+    { name: 'platform', type: 'TEXT', defaultVal: 'NULL' },
+    { name: 'priority', type: 'TEXT', defaultVal: "'Normal'" },
+    { name: 'location', type: 'TEXT', defaultVal: 'NULL' },
+    { name: 'runtime', type: 'INTEGER', defaultVal: 'NULL' },
+    { name: 'page_count', type: 'INTEGER', defaultVal: 'NULL' },
+    { name: 'source', type: 'TEXT', defaultVal: 'NULL' },
+    { name: 'source_id', type: 'TEXT', defaultVal: 'NULL' }
 ];
 
 const existingColumns = db.prepare('PRAGMA table_info(items)').all().map((c: any) => c.name);
 
 columnsToAdd.forEach(col => {
-    if (!existingColumns.includes(col)) {
+    if (!existingColumns.includes(col.name)) {
         try {
-            console.log(`Adding missing column: ${col}`);
-            const defaultVal = col === 'priority' ? "'Normal'" : "NULL";
-            db.exec(`ALTER TABLE items ADD COLUMN ${col} TEXT DEFAULT ${defaultVal}`);
+            console.log(`Adding missing column: ${col.name}`);
+            db.exec(`ALTER TABLE items ADD COLUMN ${col.name} ${col.type} DEFAULT ${col.defaultVal}`);
         } catch (err) {
-            console.error(`Failed to add column ${col}`, err);
+            console.error(`Failed to add column ${col.name}`, err);
         }
     }
 });
@@ -189,11 +185,14 @@ ipcMain.handle('get-items', () => {
 
 ipcMain.handle('add-item', (event: any, item: any) => {
     try {
+        let status = item.status || 'To Consume';
+        if (status === 'Watching') status = 'Consuming';
+
         // Sanitize item to ensure all named parameters exist
         const sanitizedItem = {
             title: item.title,
             category: item.category,
-            status: item.status,
+            status: status,
             date_finished: item.date_finished || null,
             rating: item.rating || null,
             review: item.review || null,
@@ -207,17 +206,23 @@ ipcMain.handle('add-item', (event: any, item: any) => {
             studio: item.studio || null,
             platform: item.platform || null,
             priority: item.priority || 'Normal',
-            location: item.location || null
+            location: item.location || null,
+            runtime: item.runtime !== undefined && item.runtime !== null ? Number(item.runtime) : null,
+            page_count: item.page_count !== undefined && item.page_count !== null ? Number(item.page_count) : null,
+            source: item.source || null,
+            source_id: item.source_id ? String(item.source_id) : null
         };
 
         const stmt = db.prepare(`
             INSERT INTO items (
                 title, category, status, date_finished, rating, review, image_path,
-                genre, tags, author, director, writer, actors, studio, platform, priority, location
+                genre, tags, author, director, writer, actors, studio, platform, priority, location,
+                runtime, page_count, source, source_id
             ) 
             VALUES (
                 @title, @category, @status, @date_finished, @rating, @review, @image_path,
-                @genre, @tags, @author, @director, @writer, @actors, @studio, @platform, @priority, @location
+                @genre, @tags, @author, @director, @writer, @actors, @studio, @platform, @priority, @location,
+                @runtime, @page_count, @source, @source_id
             )
         `);
         return stmt.run(sanitizedItem);
@@ -229,12 +234,15 @@ ipcMain.handle('add-item', (event: any, item: any) => {
 
 ipcMain.handle('update-item', (event: any, item: any) => {
     try {
+        let status = item.status || 'To Consume';
+        if (status === 'Watching') status = 'Consuming';
+
         // Sanitize item to ensure all named parameters exist
         const sanitizedItem = {
             id: item.id,
             title: item.title,
             category: item.category,
-            status: item.status,
+            status: status,
             date_finished: item.date_finished || null,
             rating: item.rating || null,
             review: item.review || null,
@@ -248,7 +256,11 @@ ipcMain.handle('update-item', (event: any, item: any) => {
             studio: item.studio || null,
             platform: item.platform || null,
             priority: item.priority || 'Normal',
-            location: item.location || null
+            location: item.location || null,
+            runtime: item.runtime !== undefined && item.runtime !== null ? Number(item.runtime) : null,
+            page_count: item.page_count !== undefined && item.page_count !== null ? Number(item.page_count) : null,
+            source: item.source || null,
+            source_id: item.source_id ? String(item.source_id) : null
         };
 
         const stmt = db.prepare(`
@@ -269,7 +281,11 @@ ipcMain.handle('update-item', (event: any, item: any) => {
                 studio = @studio,
                 platform = @platform,
                 priority = @priority,
-                location = @location
+                location = @location,
+                runtime = @runtime,
+                page_count = @page_count,
+                source = @source,
+                source_id = @source_id
             WHERE id = @id
         `);
         return stmt.run(sanitizedItem);
@@ -505,7 +521,7 @@ const getSettingWithEnv = (key: string, envName?: string): string | null => {
 };
 
 // TMDB Handlers
-ipcMain.handle('tmdb-search', async (event: any, query: any, category: any) => {
+ipcMain.handle('tmdb-search', async (event: any, query: any, category: any, advancedFilters?: any) => {
     try {
         const apiKey = getSettingWithEnv('tmdb_api_key', 'TMDB_API_KEY');
         if (!apiKey) {
@@ -513,7 +529,7 @@ ipcMain.handle('tmdb-search', async (event: any, query: any, category: any) => {
             err.code = 'NO_API_KEY';
             throw err;
         }
-        const results = await tmdb.search(query, category || 'Movies', apiKey);
+        const results = await tmdb.search(query, category || 'Movies', apiKey, advancedFilters);
         return { success: true, results };
     } catch (err: any) {
         console.error('tmdb-search error:', err);
@@ -566,10 +582,10 @@ ipcMain.handle('tmdb-get-details', async (event: any, id: any, type: any) => {
 });
 
 // Google Books Handlers
-ipcMain.handle('books-search', async (event: any, query: any) => {
+ipcMain.handle('books-search', async (event: any, query: any, advancedFilters?: any) => {
     try {
         const apiKey = getSettingWithEnv('google_books_api_key', 'GOOGLE_BOOKS_API_KEY');
-        const results = await books.search(query, apiKey);
+        const results = await books.search(query, apiKey, advancedFilters);
         return { success: true, results };
     } catch (err: any) {
         console.error('books-search error:', err);
@@ -616,9 +632,9 @@ ipcMain.handle('books-get-details', async (event: any, id: any) => {
 });
 
 // AniList Handlers (Anime & Manga)
-ipcMain.handle('anilist-search', async (event: any, query: any, category: any) => {
+ipcMain.handle('anilist-search', async (event: any, query: any, category: any, advancedFilters?: any) => {
     try {
-        const results = await anilist.search(query, category || 'Anime');
+        const results = await anilist.search(query, category || 'Anime', advancedFilters);
         return { success: true, results };
     } catch (err: any) {
         console.error('anilist-search error:', err);
@@ -662,4 +678,258 @@ ipcMain.handle('anilist-get-details', async (event: any, id: any, category: any)
     }
 });
 
+// Deduplication Engine
+const cleanNormalize = (str?: string | null): string => {
+    if (!str) return '';
+    return str
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '')
+        .trim();
+};
+
+ipcMain.handle('check-duplicates', () => {
+    try {
+        const items = db.prepare('SELECT * FROM items ORDER BY id ASC').all();
+
+        // Get dismissed pairs
+        const row = db.prepare("SELECT value FROM settings WHERE key = 'dismissed_duplicates'").get();
+        let dismissedKeys: string[] = [];
+        if (row && row.value) {
+            try {
+                dismissedKeys = JSON.parse(row.value);
+            } catch (e) {}
+        }
+
+        const duplicatePairs: any[] = [];
+        const seenPairs = new Set<string>();
+
+        for (let i = 0; i < items.length; i++) {
+            for (let j = i + 1; j < items.length; j++) {
+                const a = items[i];
+                const b = items[j];
+
+                const pairKey = `${Math.min(a.id, b.id)}_${Math.max(a.id, b.id)}`;
+                if (dismissedKeys.includes(pairKey) || seenPairs.has(pairKey)) continue;
+
+                let isDuplicate = false;
+                let reason = '';
+
+                // Condition 1: Identical Source and Source ID
+                if (a.source && b.source && a.source === b.source && a.source_id && b.source_id && a.source_id === b.source_id) {
+                    isDuplicate = true;
+                    reason = `Same ${a.source.toUpperCase()} Source ID (${a.source_id})`;
+                }
+
+                // Condition 2: Title and Creator / Category match
+                if (!isDuplicate) {
+                    const normTitleA = cleanNormalize(a.title);
+                    const normTitleB = cleanNormalize(b.title);
+
+                    if (normTitleA && normTitleB && normTitleA === normTitleB) {
+                        const normCreatorA = cleanNormalize(a.director || a.author || a.studio);
+                        const normCreatorB = cleanNormalize(b.director || b.author || b.studio);
+
+                        if (normCreatorA && normCreatorB && normCreatorA === normCreatorB) {
+                            isDuplicate = true;
+                            reason = 'Matching Title and Creator';
+                        } else if (a.category === b.category) {
+                            isDuplicate = true;
+                            reason = `Identical Title in ${a.category}`;
+                        }
+                    }
+                }
+
+                if (isDuplicate) {
+                    seenPairs.add(pairKey);
+                    duplicatePairs.push({
+                        pairKey,
+                        itemA: a,
+                        itemB: b,
+                        reason
+                    });
+                }
+            }
+        }
+
+        return duplicatePairs;
+    } catch (err: any) {
+        console.error('check-duplicates error:', err);
+        return [];
+    }
+});
+
+ipcMain.handle('dismiss-duplicate', (event: any, pairKey: string) => {
+    try {
+        const row = db.prepare("SELECT value FROM settings WHERE key = 'dismissed_duplicates'").get();
+        let dismissedKeys: string[] = [];
+        if (row && row.value) {
+            try {
+                dismissedKeys = JSON.parse(row.value);
+            } catch (e) {}
+        }
+
+        if (!dismissedKeys.includes(pairKey)) {
+            dismissedKeys.push(pairKey);
+            const stmt = db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('dismissed_duplicates', ?)");
+            stmt.run(JSON.stringify(dismissedKeys));
+        }
+        return { success: true };
+    } catch (err: any) {
+        console.error('dismiss-duplicate error:', err);
+        return { success: false, message: err.message };
+    }
+});
+
+ipcMain.handle('merge-items', (event: any, { primaryId, secondaryId }: any) => {
+    try {
+        const itemPrimary = db.prepare('SELECT * FROM items WHERE id = ?').get(primaryId);
+        const itemSecondary = db.prepare('SELECT * FROM items WHERE id = ?').get(secondaryId);
+
+        if (!itemPrimary || !itemSecondary) {
+            return { success: false, message: 'One or both items not found' };
+        }
+
+        // Merge attributes into primary if primary lacks them
+        const merged = {
+            id: itemPrimary.id,
+            title: itemPrimary.title || itemSecondary.title,
+            category: itemPrimary.category || itemSecondary.category,
+            status: itemPrimary.status || itemSecondary.status,
+            date_finished: itemPrimary.date_finished || itemSecondary.date_finished,
+            rating: itemPrimary.rating || itemSecondary.rating,
+            review: itemPrimary.review || itemSecondary.review,
+            image_path: itemPrimary.image_path || itemSecondary.image_path,
+            genre: itemPrimary.genre || itemSecondary.genre,
+            tags: itemPrimary.tags || itemSecondary.tags,
+            author: itemPrimary.author || itemSecondary.author,
+            director: itemPrimary.director || itemSecondary.director,
+            writer: itemPrimary.writer || itemSecondary.writer,
+            actors: itemPrimary.actors || itemSecondary.actors,
+            studio: itemPrimary.studio || itemSecondary.studio,
+            platform: itemPrimary.platform || itemSecondary.platform,
+            priority: itemPrimary.priority || itemSecondary.priority,
+            location: itemPrimary.location || itemSecondary.location,
+            runtime: itemPrimary.runtime || itemSecondary.runtime,
+            page_count: itemPrimary.page_count || itemSecondary.page_count,
+            source: itemPrimary.source || itemSecondary.source,
+            source_id: itemPrimary.source_id || itemSecondary.source_id
+        };
+
+        const transaction = db.transaction(() => {
+            const updateStmt = db.prepare(`
+                UPDATE items 
+                SET title = @title, category = @category, status = @status, date_finished = @date_finished,
+                    rating = @rating, review = @review, image_path = @image_path, genre = @genre, tags = @tags,
+                    author = @author, director = @director, writer = @writer, actors = @actors, studio = @studio,
+                    platform = @platform, priority = @priority, location = @location, runtime = @runtime,
+                    page_count = @page_count, source = @source, source_id = @source_id
+                WHERE id = @id
+            `);
+            updateStmt.run(merged);
+
+            db.prepare('DELETE FROM items WHERE id = ?').run(secondaryId);
+        });
+
+        transaction();
+        return { success: true };
+    } catch (err: any) {
+        console.error('merge-items error:', err);
+        return { success: false, message: err.message };
+    }
+});
+
+// Retroactive Backfill Tool
+ipcMain.handle('backfill-missing-stats', async () => {
+    try {
+        const tmdbApiKey = getSettingWithEnv('tmdb_api_key', 'TMDB_API_KEY');
+        const booksApiKey = getSettingWithEnv('google_books_api_key', 'GOOGLE_BOOKS_API_KEY');
+
+        // Select items missing runtime or page_count
+        const missing = db.prepare(`
+            SELECT * FROM items 
+            WHERE (runtime IS NULL AND category IN ('Movies', 'Series', 'Anime'))
+               OR (page_count IS NULL AND category IN ('Books', 'Manga'))
+            LIMIT 40
+        `).all();
+
+        let updatedCount = 0;
+
+        for (const item of missing) {
+            try {
+                let runtime: number | null = null;
+                let pageCount: number | null = null;
+                let source = item.source;
+                let sourceId = item.source_id;
+
+                if (item.category === 'Movies' || item.category === 'Series') {
+                    if (tmdbApiKey) {
+                        let tmdbId = item.source_id;
+                        if (!tmdbId) {
+                            const searchRes = await tmdb.search(item.title, item.category, tmdbApiKey);
+                            if (searchRes && searchRes.length > 0) {
+                                tmdbId = searchRes[0].id;
+                            }
+                        }
+                        if (tmdbId) {
+                            const details = await tmdb.getDetails(Number(tmdbId), item.category, tmdbApiKey);
+                            runtime = details.runtime;
+                            source = 'tmdb';
+                            sourceId = String(tmdbId);
+                        }
+                    }
+                } else if (item.category === 'Anime' || item.category === 'Manga') {
+                    let aniId = item.source_id;
+                    if (!aniId) {
+                        const searchRes = await anilist.search(item.title, item.category);
+                        if (searchRes && searchRes.length > 0) {
+                            aniId = searchRes[0].id;
+                        }
+                    }
+                    if (aniId) {
+                        const details = await anilist.getDetails(Number(aniId), item.category);
+                        runtime = details.runtime;
+                        pageCount = details.page_count;
+                        source = 'anilist';
+                        sourceId = String(aniId);
+                    }
+                } else if (item.category === 'Books') {
+                    let bookId = item.source_id;
+                    if (!bookId) {
+                        const searchRes = await books.search(item.title, booksApiKey);
+                        if (searchRes && searchRes.length > 0) {
+                            bookId = searchRes[0].id;
+                        }
+                    }
+                    if (bookId) {
+                        const details = await books.getDetails(String(bookId), booksApiKey);
+                        pageCount = details.page_count;
+                        source = 'google_books';
+                        sourceId = String(bookId);
+                    }
+                }
+
+                if (runtime !== null || pageCount !== null || sourceId !== item.source_id) {
+                    db.prepare(`
+                        UPDATE items 
+                        SET runtime = COALESCE(?, runtime), 
+                            page_count = COALESCE(?, page_count), 
+                            source = COALESCE(?, source), 
+                            source_id = COALESCE(?, source_id)
+                        WHERE id = ?
+                    `).run(runtime, pageCount, source, sourceId, item.id);
+                    updatedCount++;
+                }
+            } catch (itemErr) {
+                console.warn(`Failed to backfill item id ${item.id}:`, itemErr);
+            }
+        }
+
+        return { success: true, updatedCount, totalProcessed: missing.length };
+    } catch (err: any) {
+        console.error('backfill-missing-stats error:', err);
+        return { success: false, message: err.message };
+    }
+});
+
 module.exports = db;
+

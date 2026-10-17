@@ -101,6 +101,22 @@ const parseMediaItem = (item, defaultCategory) => {
     const poster = item.coverImage?.extraLarge || item.coverImage?.large || item.coverImage?.medium || null;
     const year = item.startDate?.year ? String(item.startDate.year) : '';
     const overview = cleanDescription(item.description);
+    let runtime = null;
+    let pageCount = null;
+    if (isAnime) {
+        const duration = item.duration || 24;
+        const episodes = item.episodes || 1;
+        runtime = duration * episodes;
+    }
+    else if (isManga) {
+        if (item.chapters) {
+            pageCount = item.chapters * 20;
+        }
+        else if (item.volumes) {
+            pageCount = item.volumes * 190;
+        }
+    }
+    const rating = item.averageScore ? Math.round(item.averageScore / 10) : null;
     return {
         id: item.id,
         title,
@@ -112,16 +128,30 @@ const parseMediaItem = (item, defaultCategory) => {
         director,
         studio,
         overview,
-        poster_path: poster
+        poster_path: poster,
+        backdrop_path: item.bannerImage || null,
+        runtime: runtime,
+        page_count: pageCount,
+        episodes: item.episodes || null,
+        chapters: item.chapters || null,
+        volumes: item.volumes || null,
+        rating: rating,
+        source: 'anilist',
+        source_id: String(item.id)
     };
 };
 const SEARCH_QUERY = `
-query ($search: String, $type: MediaType) {
-  Page(page: 1, perPage: 8) {
-    media(search: $search, type: $type, sort: POPULARITY_DESC) {
+query ($search: String, $type: MediaType, $startDate_like: String) {
+  Page(page: 1, perPage: 10) {
+    media(search: $search, type: $type, startDate_like: $startDate_like, sort: POPULARITY_DESC) {
       id
       type
       format
+      episodes
+      duration
+      chapters
+      volumes
+      averageScore
       title {
         romaji
         english
@@ -137,6 +167,7 @@ query ($search: String, $type: MediaType) {
         large
         medium
       }
+      bannerImage
       staff(perPage: 10) {
         edges {
           role
@@ -162,6 +193,11 @@ query ($id: Int) {
     id
     type
     format
+    episodes
+    duration
+    chapters
+    volumes
+    averageScore
     title {
       romaji
       english
@@ -177,6 +213,7 @@ query ($id: Int) {
       large
       medium
     }
+    bannerImage
     staff(perPage: 25) {
       edges {
         role
@@ -196,14 +233,27 @@ query ($id: Int) {
 }
 `;
 module.exports = {
-    search: async (query, category = 'Anime') => {
+    search: async (query, category = 'Anime', advancedFilters) => {
         const isManga = category === 'Manga';
         const mediaType = isManga ? 'MANGA' : 'ANIME';
-        const data = await makeGraphQLRequest(SEARCH_QUERY, {
+        const variables = {
             search: query,
             type: mediaType
-        });
-        const items = data?.Page?.media || [];
+        };
+        if (advancedFilters?.year && advancedFilters.year.trim()) {
+            variables.startDate_like = `${advancedFilters.year.trim()}%`;
+        }
+        const data = await makeGraphQLRequest(SEARCH_QUERY, variables);
+        let items = data?.Page?.media || [];
+        if (advancedFilters?.creator && advancedFilters.creator.trim()) {
+            const creatorLow = advancedFilters.creator.toLowerCase().trim();
+            const filtered = items.filter((item) => {
+                const staff = item.staff?.edges || [];
+                return staff.some((s) => s.node?.name?.full?.toLowerCase().includes(creatorLow));
+            });
+            if (filtered.length > 0)
+                items = filtered;
+        }
         return items.map((item) => parseMediaItem(item, category));
     },
     getDetails: async (id, category = 'Anime') => {
@@ -223,8 +273,17 @@ module.exports = {
             year: parsed.year,
             overview: parsed.overview,
             poster_path: parsed.poster_path,
+            backdrop_path: parsed.backdrop_path,
             category: parsed.category,
-            media_type: parsed.media_type
+            media_type: parsed.media_type,
+            runtime: parsed.runtime,
+            page_count: parsed.page_count,
+            episodes: parsed.episodes,
+            chapters: parsed.chapters,
+            volumes: parsed.volumes,
+            rating: parsed.rating,
+            source: 'anilist',
+            source_id: String(id)
         };
     },
     downloadImage: async (url, destPath) => {

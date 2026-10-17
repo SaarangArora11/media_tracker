@@ -111,8 +111,16 @@ const getOpenLibraryDetails = async (workId: string) => {
 };
 
 module.exports = {
-    search: async (query: string, apiKey?: string) => {
-        let url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=8`;
+    search: async (query: string, apiKey?: string, advancedFilters?: { year?: string; creator?: string }) => {
+        let searchQuery = query;
+        if (advancedFilters?.creator && advancedFilters.creator.trim()) {
+            searchQuery += `+inauthor:${advancedFilters.creator.trim()}`;
+        }
+        if (advancedFilters?.year && advancedFilters.year.trim()) {
+            searchQuery += `+${advancedFilters.year.trim()}`;
+        }
+
+        let url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(searchQuery)}&maxResults=10`;
         if (apiKey && apiKey.trim()) {
             url += `&key=${apiKey.trim()}`;
         }
@@ -133,7 +141,11 @@ module.exports = {
                         poster_path: posterUrl,
                         overview: info.description || '',
                         genre: (info.categories || []).join(', '),
-                        media_type: 'Books'
+                        page_count: info.pageCount || null,
+                        rating: info.averageRating || null,
+                        media_type: 'Books',
+                        source: 'google_books',
+                        source_id: String(item.id)
                     };
                 });
             }
@@ -156,7 +168,13 @@ module.exports = {
 
     getDetails: async (id: string, apiKey?: string) => {
         if (String(id).startsWith('ol_')) {
-            return await getOpenLibraryDetails(id);
+            const ol = await getOpenLibraryDetails(id);
+            return {
+                ...ol,
+                page_count: null,
+                source: 'open_library',
+                source_id: String(id)
+            };
         }
 
         let url = `https://www.googleapis.com/books/v1/volumes/${id}`;
@@ -177,7 +195,12 @@ module.exports = {
                 year: (info.publishedDate || '').split('-')[0],
                 overview: info.description || '',
                 poster_path: posterUrl,
-                media_type: 'Books'
+                page_count: info.pageCount || null,
+                rating: info.averageRating || null,
+                publisher: info.publisher || null,
+                media_type: 'Books',
+                source: 'google_books',
+                source_id: String(data.id || id)
             };
         } catch (e: any) {
             console.error('Google Books Details Error:', e.message);
